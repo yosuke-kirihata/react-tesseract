@@ -1,9 +1,16 @@
-import { ChangeEvent, useRef } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 
 import useOCR from "./useOCR";
 
 function App() {
-  const { text, isLoading, error, readText } = useOCR();
+  const [langBlob, setLangBlob] = useState<Blob | null>(null);
+  const [langPath, setLangPath] = useState<string>("");
+
+  const { text, isInitialized, isLoading, error, readText } = useOCR({
+    //langPath: "/tessdata/",
+    langPath: langPath,
+    language: "jpn",
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -23,6 +30,32 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    const f = async () => {
+      try {
+        const response = await fetch("/tessdata/jpn.traineddata");
+        const blob = await response.blob();
+        setLangBlob(blob);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    f();
+  }, []);
+
+  useEffect(() => {
+    if (langBlob) {
+      const blobUrl = URL.createObjectURL(langBlob);
+      const langPath = `${blobUrl}#customElement`;
+      setLangPath(langPath);
+
+      return () => {
+        if (langBlob) URL.revokeObjectURL(langPath);
+      };
+    }
+  }, [langBlob]);
+
   return (
     <>
       <div>
@@ -34,6 +67,7 @@ function App() {
           style={{ display: "none" }}
         />
         <button onClick={handleUploadClick}>画像をアップロード</button>
+        {!isInitialized && <p>初期化中...</p>}
         {isLoading && <p>読み取り中...</p>}
         {error && <p>エラー: {error}</p>}
         {text && (

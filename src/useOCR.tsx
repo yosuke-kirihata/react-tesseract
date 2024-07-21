@@ -1,13 +1,43 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { createWorker, OEM, RecognizeResult } from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/js/pdf.worker.mjs";
 
-const useOCR = () => {
+interface UseOCROptions {
+  langPath: string;
+  language: string;
+}
+
+const useOCR = (options: UseOCROptions) => {
+  const { langPath, language = "jpn" } = options;
+
   const [text, setText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const workerRef = useRef<any>(null);
+
+  const initializeWorker = useCallback(async () => {
+    const worker = await createWorker(language, OEM.TESSERACT_ONLY, {
+      logger: (evt) => {
+        console.log(evt);
+      },
+      cacheMethod: "none",
+      langPath: langPath, //"/tessdata/",
+      corePath: "/js/tesseract-core.wasm.js",
+      workerPath: "/js/worker.min.js",
+    });
+
+    workerRef.current = worker;
+    setIsInitialized(true);
+  }, [langPath, language]);
+
+  useEffect(() => {
+    if (langPath && !isInitialized) {
+      initializeWorker();
+    }
+  }, [langPath, isInitialized, initializeWorker]);
 
   //   const convertPDFToImages = async (
   //     file: File
@@ -61,48 +91,56 @@ const useOCR = () => {
     return imageDataUrls;
   };
 
-  const readText = useCallback(async (file: File) => {
-    setIsLoading(true);
-    setError(null);
+  const readText = useCallback(
+    async (file: File) => {
+      if (!isInitialized) {
+        setError("OCR worker is not initialized yet.");
+        return;
+      }
 
-    let worker = null;
+      setIsLoading(true);
+      setError(null);
 
-    try {
-      worker = await createWorker("jpn", OEM.TESSERACT_ONLY, {
-        logger: (evt) => {
-          console.log(evt);
-        },
-        cacheMethod: "none",
-        langPath: "/tessdata/",
-        corePath: "/js/tesseract-core.wasm.js",
-        workerPath: "/js/worker.min.js",
-      });
+      let worker = null;
 
-      let fullText = "";
+      try {
+        worker = await createWorker("jpn", OEM.TESSERACT_ONLY, {
+          logger: (evt) => {
+            console.log(evt);
+          },
+          cacheMethod: "none",
+          langPath: "/tessdata/",
+          corePath: "/js/tesseract-core.wasm.js",
+          workerPath: "/js/worker.min.js",
+        });
 
-      if (file.type === "application/pdf") {
-        // const images = await convertPDFToImages(file);
-        const images = await convertPdfToImageDataUrls(file);
-        for (const image of images) {
-          const result: RecognizeResult = await worker.recognize(image);
-          fullText += result.data.text + "\n\n";
+        let fullText = "";
+
+        if (file.type === "application/pdf") {
+          // const images = await convertPDFToImages(file);
+          const images = await convertPdfToImageDataUrls(file);
+          for (const image of images) {
+            const result: RecognizeResult = await worker.recognize(image);
+            fullText += result.data.text + "\n\n";
+          }
+        } else {
+          const result: RecognizeResult = await worker.recognize(file);
+          fullText = result.data.text;
         }
-      } else {
-        const result: RecognizeResult = await worker.recognize(file);
-        fullText = result.data.text;
+        setText(fullText.trim());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (worker) {
+          await worker.terminate();
+        }
+        setIsLoading(false);
       }
-      setText(fullText.trim());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (worker) {
-        await worker.terminate();
-      }
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [isInitialized]
+  );
 
-  return { text, isLoading, error, readText };
+  return { text, isInitialized, isLoading, error, readText };
 };
 
 export default useOCR;
